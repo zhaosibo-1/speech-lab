@@ -1,0 +1,12 @@
+services:
+  speech-lab:
+    build: .
+    ports:
+      - "8134:8134"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8134/api/health',timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3

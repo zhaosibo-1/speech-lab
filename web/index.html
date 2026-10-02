@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>speech-lab · 语音信号处理实验台</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --line:#2d333b; --fg:#e6edf3;
+  --dim:#8b949e; --dim2:#6e7681; --blue:#58a6ff; --amber:#f59e0b;
+  --green:#34d399; --red:#f85149; --purple:#c084fc;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.6 "Segoe UI",system-ui,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:0}
+h2{font-size:15px;margin:22px 0 10px;display:flex;align-items:center;gap:8px}
+.sub{color:var(--dim);font-size:13px;margin-top:6px;max-width:900px}
+.num{display:inline-flex;align-items:center;justify-content:center;
+  width:20px;height:20px;border-radius:5px;background:var(--blue);
+  color:#0d1117;font-weight:700;font-size:12px}
+section{background:var(--panel);border:1px solid var(--line);
+  border-radius:10px;padding:16px 18px;margin-top:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+label.lbl{color:var(--dim);font-size:12px}
+select,input,button{
+  background:#0d1117;color:var(--fg);border:1px solid var(--line);
+  border-radius:7px;padding:7px 12px;font:inherit}
+input[type=number]{width:90px;padding:7px 8px}
+button{cursor:pointer}
+button.pri{background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+.pill{border:1px solid var(--line);border-radius:999px;padding:3px 12px;
+  font-size:12px;color:var(--dim)}
+.pill b{color:var(--fg)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:10px;margin:12px 0}
+.card{background:#0d1117;border:1px solid var(--line);border-radius:8px;
+  padding:10px 12px}
+.card .t{color:var(--dim);font-size:11px;margin-bottom:4px}
+.card .v{font-size:17px;font-weight:600;font-family:Consolas,monospace}
+svg{display:block;width:100%;background:#0d1117;border:1px solid var(--line);
+  border-radius:6px;margin-top:8px}
+canvas{display:block;width:100%;background:#05070c;border:1px solid var(--line);
+  border-radius:6px;margin-top:8px}
+.mid{color:var(--dim);font-size:12px}
+.note{border-left:3px solid var(--amber);padding:6px 12px;margin:10px 0;
+  color:var(--dim);font-size:12px;background:#0d1117;border-radius:0 6px 6px 0}
+.toast{position:fixed;right:18px;bottom:18px;background:var(--panel);
+  border:1px solid var(--line);border-left:3px solid var(--green);
+  border-radius:8px;padding:10px 16px;font-size:13px;z-index:9}
+.toast.err{border-left-color:var(--red)}
+.hidden{display:none}
+table.kv{border-collapse:collapse;font-size:12px;margin-top:8px;width:100%}
+table.kv td{border-top:1px solid var(--line);padding:5px 8px}
+table.kv td:first-child{color:var(--dim);width:200px}
+code{font-family:Consolas,monospace;color:var(--blue);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>speech-lab <span class="mid" id="ver"></span></h1>
+<div class="sub">纯标准库语音信号处理实验台：自实现 radix-2 FFT、自相关基频、
+MFCC。<b>每一个像素都能对着代码讲出来</b> —— 预加重、加窗、Mel 滤波器组、
+DCT，全部摊开。</div>
+<div class="row" style="margin-top:10px">
+  <span class="pill">服务 <span id="dot" style="color:var(--red)">●</span>
+    <b id="healthTxt">…</b></span>
+  <span class="pill">信号 <b id="sigCount">?</b></span>
+</div>
+
+<section>
+  <h2><span class="num">1</span>选信号</h2>
+  <div class="row">
+    <select id="sigSel" style="min-width:220px"></select>
+    <button class="pri" id="btnRun">合成并分析</button>
+    <span class="mid">或</span>
+    <input type="file" id="fileIn" accept=".wav,audio/wav">
+    <button id="btnUpload" class="ghost">分析上传的 WAV</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <label class="lbl">帧长 <input type="number" id="frameMs" value="25"
+      min="2" max="100" step="1"> ms</label>
+    <label class="lbl">帧移 <input type="number" id="hopMs" value="10"
+      min="1" max="50" step="1"> ms</label>
+    <label class="lbl">FFT
+      <select id="fftLen">
+        <option>256</option><option selected>512</option><option>1024</option>
+      </select></label>
+    <span class="mid" id="elapsedTxt"></span>
+  </div>
+  <div class="note">改<b>帧长/帧移</b>再点分析，观察语谱图变化：
+    帧长越长频率分辨率越高（谱线越细）、时间分辨率越低（竖向糊）——
+    这就是时频不确定性原理在 DSP 里的样子。</div>
+</section>
+
+<section id="secResult" class="hidden">
+  <h2><span class="num">2</span>信号概览</h2>
+  <div class="cards" id="audioCards"></div>
+  <h2><span class="num">3</span>时域波形</h2>
+  <div id="waveBox"></div>
+  <h2><span class="num">4</span>语谱图 <span class="mid">（canvas 逐格上色，
+    低=黑 → 高=白）</span></h2>
+  <canvas id="specCanvas" width="1000" height="300"></canvas>
+  <div class="mid" id="specMeta"></div>
+  <h2><span class="num">5</span>逐帧特征</h2>
+  <table class="kv" id="featRows"></table>
+</section>
+
+<footer style="color:var(--dim2);font-size:12px;text-align:center;margin-top:26px">
+  dsp / features / wavio / synth / visual 均为纯 Python 标准库 · FastAPI 仅在 HTTP 层
+</footer>
+</div>
+<div id="toast" class="hidden"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let toastTimer;
+function toast(msg, kind=''){ const el=$('#toast'); el.textContent=msg;
+  el.className=kind; el.classList.remove('hidden');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.classList.add('hidden'),6000); }
+const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+async function boot(){
+  try{
+    const h = await (await fetch('/api/health')).json();
+    $('#healthTxt').textContent='正常'; $('#dot').style.color='var(--green)';
+    $('#ver').textContent='v'+h.version;
+    $('#sigCount').textContent = h.signals.length;
+    $('#sigSel').innerHTML = h.signals.map(s =>
+      `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  }catch(e){ $('#healthTxt').textContent='离线'; }
+}
+
+function card(t, v){ return `<div class="card"><div class="t">${t}</div>
+  <div class="v">${v}</div></div>`; }
+
+function render(d){
+  $('#secResult').classList.remove('hidden');
+  const a = d.audio;
+  $('#audioCards').innerHTML =
+    card('时长', a.duration_s+' s') +
+    card('采样率', a.sample_rate+' Hz') +
+    card('峰值电平', a.peak_dbfs+' dBFS') +
+    card('帧数', a.frames) +
+    card(' voiced 占比', (d.features.voiced_ratio*100).toFixed(0)+'%') +
+    card('分析耗时', d.elapsed_ms+' ms');
+  $('#waveBox').innerHTML = d.svg.waveform;
+
+  // ---- 语谱图：canvas 逐格上色。服务端以峰值归一：floor = peak-60dB ----
+  const g = d.spectrogram;
+  const cv = $('#specCanvas'), ctx = cv.getContext('2d');
+  const rows = g.db[0].length, cols = g.db.length;
+  const cw = cv.width / cols, ch = cv.height / rows;
+  for (let c = 0; c < cols; c++){
+    for (let r = 0; r < rows; r++){
+      // t=0（floor，黑）→ t=1（峰值，白）
+      const t = Math.max(0, Math.min(1,
+        (g.db[c][r] - g.floor_db) / (g.peak_db - g.floor_db)));
+      ctx.fillStyle = viridis(t);
+      // y 轴翻转：第 0 个 bin 是低频，画在底部
+      ctx.fillRect(c*cw, cv.height-(r+1)*ch, cw+0.5, ch+0.5);
+    }
+  }
+  $('#specMeta').textContent =
+    `网格 ${cols}×${rows} · Nyquist ${g.nyquist_hz} Hz · ` +
+    `帧长 ${g.frame_ms}ms 帧移 ${g.hop_ms}ms · 动态范围 60dB ` +
+    `(峰 ${g.peak_db.toFixed(0)}dB，下采样：每格 ${g.grid_hop_frames} 帧)`;
+
+  // ---- 逐帧特征摘要：SVG 轮廓 + 统计表 ----
+  const f = d.features;
+  const rowsHtml = [
+    ['基频 pitch（浊音帧）', f.pitch_hz, d.svg.pitch,
+     '自相关法：周期信号的自相关在周期处出现峰，峰高即置信度'],
+    ['短时能量', f.energy, d.svg.energy,
+     '帧内样本平方和；能量轮廓是 VAD（语音端点检测）的最低成本实现'],
+    ['过零率 ZCR', f.zcr, d.svg.zcr,
+     '相邻样本符号翻转次数；摩擦音（噪声）高、浊音（周期）低'],
+    ['频谱质心', f.centroid_hz, d.svg.centroid,
+     '功率加权的平均频率，粗略对应「音色亮暗」'],
+  ].map(([name, st, svg, note]) => `
+    <tr><td>${name}<div class="mid">${note}</div></td>
+    <td><div class="row mid">均值 <b style="color:var(--fg)">${st.mean}</b>
+      · 最大 ${st.max} · 最小 ${st.min}</div>${svg}</td></tr>`).join('');
+  $('#featRows').innerHTML = rowsHtml +
+    `<tr><td>MFCC 均值向量（13 维）<div class="mid">0 号≈响度，1-12≈音色；
+      由 Mel 滤波器组 + log + DCT 得到</div></td>
+     <td><code>[${f.mfcc_mean.join(', ')}]</code></td></tr>`;
+  $('#elapsedTxt').textContent = `分析 ${d.elapsed_ms} ms`;
+}
+
+// 与教科书一致的 5 段渐变（黑→蓝→青→黄→白）
+function viridis(t){
+  const stops = [[0,[10,10,30]],[.3,[40,70,160]],[.6,[30,180,170]],
+                 [.85,[230,210,60]],[1,[255,255,240]]];
+  for (let i = 0; i < stops.length - 1; i++){
+    const [t0,c0] = stops[i], [t1,c1] = stops[i+1];
+    if (t <= t1){
+      const k = (t - t0) / (t1 - t0);
+      return `rgb(${c0.map((v,j)=>Math.round(v+(c1[j]-v)*k)).join(',')})`;
+    }
+  }
+  return 'rgb(255,255,240)';
+}
+
+async function post(url, body){
+  const r = await fetch(url, { method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body) });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.detail || JSON.stringify(d));
+  return d;
+}
+
+function params(){
+  return { frame_ms:+$('#frameMs').value, hop_ms:+$('#hopMs').value,
+           fft_len:+$('#fftLen').value };
+}
+
+$('#btnRun').onclick = async () => {
+  const btn = $('#btnRun');
+  btn.disabled = true; btn.textContent = '分析中…';
+  try{
+    const d = await post('/api/analyze',
+      { signal: $('#sigSel').value, ...params() });
+    render(d);
+    toast(`分析完成：${d.audio.frames} 帧 / ${d.elapsed_ms} ms`,'ok');
+  }catch(e){ toast('失败：'+e.message,'err'); }
+  finally{ btn.disabled=false; btn.textContent='合成并分析'; }
+};
+
+$('#btnUpload').onclick = async () => {
+  const file = $('#fileIn').files[0];
+  if (!file){ toast('先选一个 .wav 文件','err'); return; }
+  const btn = $('#btnUpload');
+  btn.disabled = true;
+  try{
+    const fd = new FormData();
+    fd.append('file', file);
+    const p = params();
+    const r = await fetch(
+      `/api/analyze/upload?frame_ms=${p.frame_ms}&hop_ms=${p.hop_ms}` +
+      `&fft_len=${p.fft_len}`, { method:'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || JSON.stringify(d));
+    render(d);
+    toast('上传分析完成','ok');
+  }catch(e){ toast('失败：'+e.message,'err'); }
+  finally{ btn.disabled=false; }
+};
+
+boot();
+</script>
+</body>
+</html>
